@@ -4,36 +4,42 @@ from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, ContextTypes, filters
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
-
 user_data_store = {}
 
 
-def merge_videos(main, reaction, output):
+def run_ffmpeg(cmd):
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    if result.returncode != 0:
+        raise RuntimeError(result.stderr)
+
+
+def merge_videos(main_video, reaction_video, output_video):
     cmd = [
         "ffmpeg",
         "-y",
-        "-i", main,
-        "-i", reaction,
+        "-i", main_video,
+        "-i", reaction_video,
         "-filter_complex",
         (
-            "[1:v]scale=320:-1[rv];"
-            "[0:v][rv]overlay=(W-w)/2:20[v];"
-            "[0:a]volume=1.0[a0];"
-            "[1:a]volume=0.35[a1];"
-            "[a0][a1]amix=inputs=2:duration=shortest[a]"
+            # الفيديو الأساسي: نجعله خلفية 720x1280
+            "[0:v]scale=720:1280:force_original_aspect_ratio=decrease,"
+            "pad=720:1280:(ow-iw)/2:(oh-ih)/2:black[bg];"
+
+            # فيديو الرياكشن: نصغره ونضعه بالأعلى
+            "[1:v]scale=260:-1[react];"
+
+            # تركيب الرياكشن فوق الخلفية
+            "[bg][react]overlay=(W-w)/2:40[v]"
         ),
         "-map", "[v]",
-        "-map", "[a]",
+        "-map", "0:a?",
         "-c:v", "libx264",
         "-c:a", "aac",
         "-shortest",
-        output
+        output_video
     ]
 
-    result = subprocess.run(cmd, capture_output=True, text=True)
-
-    if result.returncode != 0:
-        raise RuntimeError(result.stderr)
+    run_ffmpeg(cmd)
 
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -48,57 +54,58 @@ async def handle_video(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if user_id not in user_data_store:
         user_data_store[user_id] = {"main": None, "reaction": None}
 
-    file = None
+    tg_file = None
 
     if update.message.video:
-        file = await update.message.video.get_file()
+        tg_file = await update.message.video.get_file()
     elif update.message.document and update.message.document.mime_type and update.message.document.mime_type.startswith("video/"):
-        file = await update.message.document.get_file()
+        tg_file = await update.message.document.get_file()
     else:
         await update.message.reply_text("أرسل ملف فيديو صحيح")
         return
 
     if user_data_store[user_id]["main"] is None:
-        path = f"{user_id}_main.mp4"
-        await file.download_to_drive(path)
-        user_data_store[user_id]["main"] = path
+        main_path = f"{user_id}_main.mp4"
+        await tg_file.download_to_drive(main_path)
+        user_data_store[user_id]["main"] = main_path
         await update.message.reply_text("أرسل فيديو الرياكشن")
         return
 
     if user_data_store[user_id]["reaction"] is None:
-        path = f"{user_id}_reaction.mp4"
-        await file.download_to_drive(path)
-        user_data_store[user_id]["reaction"] = path
+        reaction_path = f"{user_id}_reaction.mp4"
+        await tg_file.download_to_drive(reaction_path)
+        user_data_store[user_id]["reaction"] = reaction_path
+
         await update.message.reply_text("جاري المعالجة...")
 
-        output = f"output_{user_id}.mp4"
+        output_path = f"{user_id}_output.mp4"
 
         try:
             merge_videos(
                 user_data_store[user_id]["main"],
                 user_data_store[user_id]["reaction"],
-                output
+                output_path
             )
 
-            if not os.path.exists(output):
+            if not os.path.exists(output_path):
                 await update.message.reply_text("فشل إنشاء الفيديو النهائي")
                 return
 
-            with open(output, "rb") as video_file:
-                await update.message.reply_video(video=video_file)
+            with open(output_path, "rb") as f:
+                await update.message.reply_video(video=f)
 
         except Exception as e:
             await update.message.reply_text(f"حدث خطأ أثناء المعالجة:\n{e}")
 
         finally:
-            for file_path in [
+            for path in [
                 user_data_store[user_id]["main"],
                 user_data_store[user_id]["reaction"],
-                output
+                output_path
             ]:
-                if file_path and os.path.exists(file_path):
+                if path and os.path.exists(path):
                     try:
-                        os.remove(file_path)
+                        os.remove(path)
                     except:
                         pass
 
@@ -106,6 +113,9 @@ async def handle_video(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 def main():
+    if not BOT_TOKEN:
+        raise ValueError("BOT_TOKEN not found")
+
     app = Application.builder().token(BOT_TOKEN).build()
 
     app.add_handler(CommandHandler("start", start))
