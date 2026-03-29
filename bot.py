@@ -13,6 +13,9 @@ def run_ffmpeg(cmd):
         raise RuntimeError(result.stderr)
 
 
+# =========================
+# دمج الفيديو + دمج الصوتين
+# =========================
 def merge_videos(main_video, reaction_video, output_video):
     cmd = [
         "ffmpeg",
@@ -30,12 +33,18 @@ def merge_videos(main_video, reaction_video, output_video):
             "crop=720:860[bottom];"
 
             # دمج عمودي
-            "[top][bottom]vstack=inputs=2[v]"
+            "[top][bottom]vstack=inputs=2[v];"
+
+            # دمج الصوتين مع الحفاظ على الاثنين
+            "[0:a]volume=1.0[a0];"
+            "[1:a]volume=1.0[a1];"
+            "[a0][a1]amix=inputs=2:duration=longest:dropout_transition=0[a]"
         ),
         "-map", "[v]",
-        "-map", "0:a?",
+        "-map", "[a]",
         "-c:v", "libx264",
         "-c:a", "aac",
+        "-b:a", "192k",
         "-shortest",
         output_video
     ]
