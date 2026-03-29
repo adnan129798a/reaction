@@ -21,15 +21,16 @@ def merge_videos(main_video, reaction_video, output_video):
         "-i", reaction_video,
         "-filter_complex",
         (
-            # الفيديو الأساسي: نجعله خلفية 720x1280
-            "[0:v]scale=720:1280:force_original_aspect_ratio=decrease,"
-            "pad=720:1280:(ow-iw)/2:(oh-ih)/2:black[bg];"
+            # فيديو الرياكشن بالأعلى
+            "[1:v]scale=720:420:force_original_aspect_ratio=increase,"
+            "crop=720:420[top];"
 
-            # فيديو الرياكشن: نصغره ونضعه بالأعلى
-            "[1:v]scale=260:-1[react];"
+            # الفيديو الأساسي بالأسفل
+            "[0:v]scale=720:860:force_original_aspect_ratio=increase,"
+            "crop=720:860[bottom];"
 
-            # تركيب الرياكشن فوق الخلفية
-            "[bg][react]overlay=(W-w)/2:40[v]"
+            # دمج عمودي
+            "[top][bottom]vstack=inputs=2[v]"
         ),
         "-map", "[v]",
         "-map", "0:a?",
@@ -49,6 +50,9 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def handle_video(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.message is None or update.effective_user is None:
+        return
+
     user_id = update.effective_user.id
 
     if user_id not in user_data_store:
@@ -58,7 +62,11 @@ async def handle_video(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if update.message.video:
         tg_file = await update.message.video.get_file()
-    elif update.message.document and update.message.document.mime_type and update.message.document.mime_type.startswith("video/"):
+    elif (
+        update.message.document
+        and update.message.document.mime_type
+        and update.message.document.mime_type.startswith("video/")
+    ):
         tg_file = await update.message.document.get_file()
     else:
         await update.message.reply_text("أرسل ملف فيديو صحيح")
@@ -106,7 +114,7 @@ async def handle_video(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 if path and os.path.exists(path):
                     try:
                         os.remove(path)
-                    except:
+                    except Exception:
                         pass
 
             user_data_store[user_id] = {"main": None, "reaction": None}
